@@ -30,6 +30,8 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "expo-dev-client",
+      "expo-system-ui",
       [
         "react-native-ble-plx",
         {

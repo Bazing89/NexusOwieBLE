@@ -1,160 +1,120 @@
-import { useEffect, useState } from 'react';
-import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import './global.css';
+
+import { useCallback, useEffect, useState } from 'react';
+import { Platform, View, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { FirmwareStyleIpPanel } from './components/FirmwareStyleIpPanel';
-import { isSupabaseConfigured, supabase } from './lib/supabase';
+import * as SplashScreen from 'expo-splash-screen';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { AppShell } from './components/AppShell';
+import { DataHeader } from './components/DataHeader';
+import { AppSettingsScreen } from './screens/AppSettingsScreen';
+import { BleConnectScreen } from './screens/BleConnectScreen';
+import { DataScreen } from './screens/DataScreen';
 
 export default function App() {
-  const [userEmail, setUserEmail] = useState<string | null | undefined>(undefined);
-  const [bleState, setBleState] = useState<string>('…');
-  const [deviceIp, setDeviceIp] = useState<[number, number, number, number]>([192, 168, 4, 1]);
+  const { height, width } = useWindowDimensions();
+  const [connected, setConnected] = useState(false);
+  const [device, setDevice] = useState<{ id: string; name: string | null } | null>(null);
+  const [appSettings, setAppSettings] = useState(false);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
-      setUserEmail(null);
-      return;
-    }
-    void supabase.auth
-      .getSession()
-      .then(({ data: { session } }) => setUserEmail(session?.user?.email ?? null));
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUserEmail(session?.user?.email ?? null);
-    });
-    return () => subscription.unsubscribe();
+    void SplashScreen.hideAsync();
   }, []);
 
   useEffect(() => {
-    if (Platform.OS === 'web') {
-      setBleState('Not available on web');
-      return;
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    for (const el of [document.documentElement, document.body, document.getElementById('root')]) {
+      if (!el) continue;
+      el.style.height = '100%';
+      el.style.margin = '0';
     }
-    type BleMod = typeof import('react-native-ble-plx');
-    let mod: BleMod;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      mod = require('react-native-ble-plx') as BleMod;
-    } catch {
-      setBleState('Native BLE module not loaded');
-      return;
-    }
-    let manager: InstanceType<typeof mod.BleManager>;
-    try {
-      manager = new mod.BleManager();
-    } catch {
-      setBleState('Unusable in Expo Go — run a dev build (prebuild) for BLE');
-      return;
-    }
-    const sub = manager.onStateChange((state) => {
-      setBleState(String(state));
-    }, true);
-    return () => {
-      sub.remove();
-      void manager.destroy();
-    };
   }, []);
 
-  const gw = `${deviceIp[0]}.${deviceIp[1]}.${deviceIp[2]}.1`;
-  const nm = '255.255.255.0';
+  const handleBleConnected = useCallback((d: { id: string; name: string | null }) => {
+    setDevice(d);
+    setConnected(true);
+  }, []);
+
+  const handleDemo = useCallback(() => {
+    setDevice({ id: 'demo', name: 'Demo device' });
+    setConnected(true);
+  }, []);
+
+  const backToConnection = useCallback(() => {
+    setConnected(false);
+    setDevice(null);
+    setAppSettings(false);
+  }, []);
+
+  const handleDisconnect = useCallback(() => {
+    backToConnection();
+  }, [backToConnection]);
+
+  const webFill =
+    Platform.OS === 'web'
+      ? { minHeight: height, minWidth: width, flex: 1 as const }
+      : { flex: 1 as const };
+
+  if (!connected) {
+    return (
+      <SafeAreaView className="flex-1 bg-black" edges={['top', 'left', 'right', 'bottom']}>
+        <StatusBar style="light" />
+        <View
+          className="w-full items-center"
+          style={[
+            { paddingVertical: 20, paddingHorizontal: 12 },
+            webFill,
+          ]}
+        >
+          <AppShell>
+            <BleConnectScreen onConnected={handleBleConnected} onDemo={handleDemo} />
+          </AppShell>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (appSettings) {
+    return (
+      <SafeAreaView className="flex-1 bg-black" edges={['top', 'left', 'right', 'bottom']}>
+        <StatusBar style="light" />
+        <View
+          className="w-full"
+          style={[
+            { paddingVertical: 12, paddingHorizontal: 12 },
+            webFill,
+          ]}
+        >
+          <AppShell>
+            <AppSettingsScreen onBack={() => setAppSettings(false)} onDisconnect={handleDisconnect} />
+          </AppShell>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const displayName = device?.name || 'Nexus Owie';
+  const subtitle = device ? `Live · ${device.id === 'demo' ? 'demo' : 'device'}` : undefined;
 
   return (
-    <View style={styles.root}>
+    <SafeAreaView className="flex-1 bg-black" edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar style="light" />
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>NexusOwieBLE</Text>
-        <Text style={styles.subtitle}>Same layout language as a small firmware IP screen — hook values to BLE when your service is ready.</Text>
-
-        <FirmwareStyleIpPanel
-          modeLabel="ADDR"
-          padOctets={false}
-          ip={deviceIp}
-          gatewayText={gw}
-          netmaskText={nm}
-          onIpChange={(next) =>
-            setDeviceIp([next[0], next[1], next[2], next[3]] as [number, number, number, number])
-          }
-        />
-
-        <View style={styles.card}>
-          <Text style={styles.label}>Bluetooth</Text>
-          <Text style={styles.body}>Adapter: {bleState}</Text>
-          {Platform.OS !== 'web' ? (
-            <Text style={styles.hint}>Use a dev build (not Expo Go) to talk to your chip over BLE.</Text>
-          ) : null}
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.label}>Supabase</Text>
-          {!isSupabaseConfigured ? (
-            <Text style={styles.body}>
-              Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in <Text style={styles.code}>.env</Text>
-            </Text>
-          ) : (
-            <Text style={styles.body}>
-              {userEmail === undefined
-                ? '…'
-                : userEmail
-                  ? `Session: ${userEmail}`
-                  : 'Signed out'}
-            </Text>
-          )}
-        </View>
-      </ScrollView>
-    </View>
+      <View
+        className="w-full items-center"
+        style={[
+          { paddingVertical: 16, paddingHorizontal: 12 },
+          webFill,
+        ]}
+      >
+        <AppShell>
+          <DataHeader
+            title={displayName}
+            onBack={backToConnection}
+            onSettingsPress={() => setAppSettings(true)}
+          />
+          <DataScreen subtitle={subtitle} />
+        </AppShell>
+      </View>
+    </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: '#0f1419',
-  },
-  scroll: {
-    padding: 24,
-    paddingTop: 56,
-    paddingBottom: 40,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#e7ecf3',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#6b7c95',
-    marginBottom: 20,
-  },
-  card: {
-    backgroundColor: '#1a222d',
-    borderRadius: 12,
-    padding: 16,
-    marginTop: 14,
-  },
-  label: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#8b9cb3',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: 8,
-  },
-  body: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: '#e7ecf3',
-  },
-  hint: {
-    marginTop: 10,
-    fontSize: 13,
-    lineHeight: 19,
-    color: '#6b7c95',
-  },
-  code: {
-    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
-    fontSize: 14,
-    color: '#9ecbff',
-  },
-});
